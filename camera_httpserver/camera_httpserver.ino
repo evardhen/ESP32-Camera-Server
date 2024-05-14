@@ -10,6 +10,7 @@
 #include <StringArray.h>
 #include <SPIFFS.h>
 #include <FS.h>
+#include <ESPmDNS.h>
 
 
 const char* ssid = "";
@@ -40,6 +41,7 @@ boolean new_photo = false;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
+#define LED_GPIO_NUM 4
 
 void setup() {
   Serial.begin(115200);
@@ -60,6 +62,15 @@ void setup() {
 
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+
+  // Initialize mDNS
+  if (!MDNS.begin("esp32-cam")) {
+    Serial.println("Error setting up MDNS responder!");
+    while (1) {
+      delay(500);
+    }
+  }
+  Serial.println("mDNS responder started");
 
   // Turn-off the 'brownout detector'
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
@@ -103,29 +114,37 @@ void setup() {
     ESP.restart();
   }
 
-server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request) {
-  camera_fb_t *fb = esp_camera_fb_get(); // Get a frame
-  Serial.println("New picture taken...");
-  if (!fb) {
-    Serial.println("Camera capture failed");
-    request->send(500, "text/plain", "Failed to capture");
-    return;
-  }
+  pinMode(LED_GPIO_NUM, OUTPUT);
 
-  // Send the frame
-  uint8_t *buf = (uint8_t *)malloc(fb->len);
-  if (!buf) {
-    Serial.println("Malloc failed");
-    request->send(500, "text/plain", "Server Error");
-    esp_camera_fb_return(fb);
-    return;
-  }
-  memcpy(buf, fb->buf, fb->len);
-  request->send_P(200, "image/jpeg", buf, fb->len);
-  free(buf);
 
-  esp_camera_fb_return(fb); // Return the frame buffer back to the driver for reuse
-});
+  server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request) {
+    digitalWrite(LED_GPIO_NUM, HIGH);
+    delay(500);
+    camera_fb_t *fb = esp_camera_fb_get(); // Get a frame
+    Serial.println("New picture taken...");
+    if (!fb) {
+      digitalWrite(LED_GPIO_NUM, LOW);
+      Serial.println("Camera capture failed");
+      request->send(500, "text/plain", "Failed to capture");
+      return;
+    }
+
+    // Send the frame
+    uint8_t *buf = (uint8_t *)malloc(fb->len);
+    if (!buf) {
+      digitalWrite(LED_GPIO_NUM, LOW);
+      Serial.println("Malloc failed");
+      request->send(500, "text/plain", "Server Error");
+      esp_camera_fb_return(fb);
+      return;
+    }
+    memcpy(buf, fb->buf, fb->len);
+    request->send_P(200, "image/jpeg", buf, fb->len);
+    free(buf);
+
+    esp_camera_fb_return(fb); // Return the frame buffer back to the driver for reuse
+    digitalWrite(LED_GPIO_NUM, LOW);
+  });
 
   server.begin();
 
